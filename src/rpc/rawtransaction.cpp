@@ -257,6 +257,69 @@ PartiallySignedTransaction ProcessPSBT(const std::string& psbt_string, const std
     return psbtx;
 }
 
+static RPCHelpMan getrawtransactions()
+{
+    return RPCHelpMan{"getrawtransactions",
+                "The bulk processing version of \"getrawtransaction\"",
+                {
+                        {"txids", RPCArg::Type::ARR, RPCArg::Optional::NO, "A json array of transaction ids",
+                         {
+                                 {"txid", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "A transaction id"},
+                         },
+                        },
+                },
+                RPCResult{
+                        RPCResult::Type::STR, "", "json array with serialized hex-encoded transactions"
+                },
+                RPCExamples{
+                        HelpExampleCli("getrawtransactions", R"('["txid01", "txid02", "txid03"]')")
+                },
+                [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
+        {
+                UniValue txIds = request.params[0].get_array();
+                if (txIds.empty()) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Parameter 'txIds' cannot be empty");
+                }
+
+                if (txIds.size() > 1000) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "'txIds' are limited to 1000 max in count");
+                }
+
+                UniValue result(UniValue::VOBJ);
+
+                const NodeContext& node = EnsureAnyNodeContext(request.context);
+                ChainstateManager& chainman = EnsureChainman(node);
+
+                for(unsigned int i = 0; i < txIds.size(); i++) {
+                    std::string txId = txIds[i].get_str();
+
+                    uint256 hash = ParseHashV(txId, "txid");
+                    if (hash == chainman.GetParams().GenesisBlock().hashMerkleRoot) {
+                        continue;
+                    }
+
+                    uint256 hash_block;
+                    const CBlockIndex* blockindex = nullptr;
+                    const CTransactionRef tx = GetTransaction(
+                            blockindex,
+                            node.mempool.get(),
+                            hash,
+                            hash_block,
+                            chainman.m_blockman);
+
+                    if(!tx) {
+                        continue;
+                    }
+
+                    std::string hexTx = EncodeHexTx(*tx, RPCSerializationFlags());
+                    result.pushKV(txId, hexTx);
+                }
+
+                return result;
+        },
+    };
+}
+
 static RPCHelpMan getrawtransaction()
 {
     return RPCHelpMan{
@@ -1998,6 +2061,7 @@ void RegisterRawTransactionRPCCommands(CRPCTable& t)
 {
     static const CRPCCommand commands[]{
         {"rawtransactions", &getrawtransaction},
+        {"rawtransactions", &getrawtransactions},
         {"rawtransactions", &createrawtransaction},
         {"rawtransactions", &decoderawtransaction},
         {"rawtransactions", &decodescript},
